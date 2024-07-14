@@ -35,15 +35,21 @@ This repository contains the components required to set up and run the sentiment
    ```
 
 5. **Run the model API**:
-   Start the model API container. This will serve the model on port 5000 of your local machine.
+   Start the model API container. This will serve the model on port 5050 of your local machine.
 
    ```bash
-   docker run --name serving_model -p 5000:5000 -d model_api
+   docker run --name serving_model -p 5050:5050 -d model_api
    ```
 
 ## Usage
 
-The sentiment analysis API is accessible at `http://localhost:5000/predict`. You can send data to this endpoint to get predictions.
+The sentiment analysis API is accessible at `http://localhost:5050/predict`. You can send data to this endpoint to get predictions.
+
+```bash
+curl -X POST http://localhost:5050/predict \
+     -H "Content-Type: application/json" \
+     -d '{"sentence": "I love learning about AI!"}'
+```
 
 ## Stopping the Project
 

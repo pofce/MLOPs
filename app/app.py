@@ -1,4 +1,5 @@
 import torch
+import mlflow
 from flask import Flask, request, jsonify
 from transformers import RobertaTokenizer
 
@@ -6,7 +7,10 @@ app = Flask(__name__)
 
 # Initialize a tokenizer using the 'roberta-base' pre-trained model
 tokenizer = RobertaTokenizer.from_pretrained('roberta-base')
-model = torch.load('trained_model.pth')
+
+mlflow.set_tracking_uri("databricks")
+mlflow.set_registry_uri('databricks-uc')
+model = mlflow.pytorch.load_model(f"models:/mlops.default.mymodel@Champion")
 
 
 def analyze_sentiment(input_str):
@@ -48,4 +52,4 @@ def predict():
 
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5050)

@@ -1,12 +1,11 @@
 import json
-
-from azure.storage.blob import BlobServiceClient
-from azure.core.exceptions import ResourceExistsError
-from datetime import datetime, timedelta
+import boto3
+from pathlib import Path
+import logging
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from pathlib import Path
+from datetime import datetime, timedelta
 
 config_path = '/opt/airflow/config/secrets.json'
 
@@ -14,64 +13,67 @@ config_path = '/opt/airflow/config/secrets.json'
 with open(config_path, 'r') as file:
     config = json.load(file)
 
-ACCOUNT_URL = config["account_url"]
-SAS_TOKEN = config["sas_token"]
-CONTAINER_NAME = config["container_name"]
-DATA_DIRECTORY = config["data_directory"]
+AWS_ACCESS_KEY_ID = config['aws_access_key_id']
+AWS_SECRET_ACCESS_KEY = config['aws_secret_access_key']
+BUCKET_NAME = config['bucket_name']
+DATA_DIRECTORY = config['data_directory']
 
-# Create a BlobServiceClient
-blob_service_client = BlobServiceClient(account_url=ACCOUNT_URL, credential=SAS_TOKEN)
+# Create an S3 client
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+)
 
 
-def create_container_if_not_exists(blob_service_client, CONTAINER_NAME):
+def file_exists_in_bucket(s3_client, bucket_name, key):
     """
-    Ensure the container exists in Azure Blob Storage.
+    Function to check if a file exists in the S3 bucket.
     """
     try:
-        container_client = blob_service_client.get_container_client(CONTAINER_NAME)
-        container_client.create_container()
-        print(f'Container {CONTAINER_NAME} created.')
-    except ResourceExistsError:
-        print(f'Container {CONTAINER_NAME} already exists.')
+        s3_client.head_object(Bucket=bucket_name, Key=key)
+        return True
+    except:
+        return False
 
 
-def file_exists_in_container(container_client, blob_name):
+def upload_file_to_s3(file_path, bucket_name, base_directory):
     """
-    Function to check if a file exists in the container.
+    Function to upload a file to an S3 bucket, preserving the directory structure.
     """
-    blob_client = container_client.get_blob_client(blob_name)
-    return blob_client.exists()
+    relative_path = file_path.relative_to(base_directory)
+    key = str(relative_path)
+
+    # Open the file and upload it
+    with file_path.open("rb") as data:
+        s3_client.upload_fileobj(data, Bucket=bucket_name, Key=key)
+        logging.info(f'Uploaded {file_path.name} to {bucket_name}/{key}')
 
 
-def transfer_to_azure_blob():
+def transfer_to_s3():
     """
-    Function that transfers data to the Azure Blob Storage container.
+    Function that transfers data to the S3 bucket, preserving directory structure.
     """
-    create_container_if_not_exists(blob_service_client, CONTAINER_NAME)
-    container_client = blob_service_client.get_container_client(CONTAINER_NAME)
-
+    base_directory = Path(DATA_DIRECTORY)
     # Loop through each file in the directory
-    for file_path in Path(DATA_DIRECTORY).iterdir():
+    for file_path in base_directory.rglob('*'):
         if file_path.is_file():
-            # Check if the file already exists in the container
-            if not file_exists_in_container(container_client, file_path.name):
+            key = str(file_path.relative_to(base_directory))
+            # Check if the file already exists in the bucket
+            if not file_exists_in_bucket(s3_client, BUCKET_NAME, key):
                 # Upload the file if it does not exist
-                with open(file_path, "rb") as data:
-                    container_client.upload_blob(name=file_path.name, data=data, overwrite=True)
-                print(f'Uploaded {file_path.name} to {CONTAINER_NAME}')
+                upload_file_to_s3(file_path, BUCKET_NAME, base_directory)
             else:
-                print(f'{file_path.name} already exists in the container {CONTAINER_NAME}.')
+                print(f'{key} already exists in the bucket {BUCKET_NAME}.')
 
 
 default_args = {
     'owner': 'Vladyslav Radchenko',
     'start_date': datetime.now(),
-    'retries': 3,
+    'retries': 0,
     'retry_delay': timedelta(minutes=1),
     'catchup': False,
 }
 
-
-with DAG('Data_Transfer_Dag', default_args=default_args, schedule_interval="@daily", tags=["MLOPs", "Hw2"]):
-
-    PythonOperator(task_id='Data_Transfer_From_Local_To_Azure', python_callable=transfer_to_azure_blob)
+with DAG('Data_Transfer_Dag', default_args=default_args, schedule_interval="@daily", tags=["MLOPs"]):
+    PythonOperator(task_id='Data_Transfer_From_Local_To_S3', python_callable=transfer_to_s3)
